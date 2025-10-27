@@ -44,12 +44,14 @@ class SimpleZip {
     void dumpTree(std::string ident, const HuffmanNodePtr& tree);
     void findValueOnTree(char val, const HuffmanNodePtr& tree,
                          std::string& outpath, std::string initPath = "");
+    void buildLookupTable(const HuffmanNodePtr& tree, std::string initPath);
 
    private:
     std::ofstream _fout;
     std::ifstream _fin;
     int _lastError = 0;
     std::map<char, size_t> _freq;
+    std::map<char, std::string> _lookupTable;
     HuffmanNodePtr _tree = nullptr;
 };
 

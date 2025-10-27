@@ -84,6 +84,7 @@ int SimpleZip::zip() {
     analyze();
     buildTree();
     writeFreqMap();
+    buildLookupTable(_tree, "");
     encode();
 
     return 0;
@@ -180,6 +181,21 @@ void SimpleZip::findValueOnTree(char val, const HuffmanNodePtr& tree,
     }
 }
 
+void SimpleZip::buildLookupTable(const HuffmanNodePtr& tree, std::string initPath) {
+    if (!tree->l && !tree->r) {
+        _lookupTable.insert({tree->val, initPath});
+        return;
+    }
+
+    if (tree->l) {
+        buildLookupTable(tree->l, initPath + '0');
+    }
+
+    if (tree->r) {
+        buildLookupTable(tree->r, initPath + "1");
+    }
+}
+
 void SimpleZip::writeFreqMap() {
     _fout.open(fileOut, std::ios::binary);
 
@@ -215,7 +231,11 @@ void SimpleZip::encode() {
         char val;
         fin.read(&val, 1);
         std::string path;
-        findValueOnTree(val, _tree, path);
+        // findValueOnTree(val, _tree, path);
+
+        if(_lookupTable.find(val) != _lookupTable.end()) {
+            path = _lookupTable.at(val);
+        }
 
         for (auto&& it : path) {
             if (it == '0') {
