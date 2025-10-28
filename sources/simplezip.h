@@ -50,6 +50,7 @@ class SimpleZip {
     std::ofstream _fout;
     std::ifstream _fin;
     int _lastError = 0;
+    char _numPad = 0;
     std::map<char, size_t> _freq;
     std::map<char, std::string> _lookupTable;
     HuffmanNodePtr _tree = nullptr;

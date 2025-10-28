@@ -9,74 +9,88 @@
 #define WRITE_BUFF_SIZE 4096
 
 class BitStream {
-    char bitIdx = 0;
+    char numBits = 0;
     char bits = 0;
-    int byteIdx = 0;
+    int numBytes = 0;
     char bytes[WRITE_BUFF_SIZE];
     int readSize = 0;
     std::ofstream* fout = nullptr;
     std::ifstream* fin = nullptr;
     bool isEof = false;
+    bool isEndBitStream = false;
+    std::streampos eofPos = 0;
+    char numPad = 0;
 
    public:
+    void setNumPad(char pad) { numPad = pad; }
     void setFileOut(std::ofstream* ofout) { fout = ofout; }
-    void setFileIn(std::ifstream* ofin) { fin = ofin; }
+    void setFileIn(std::ifstream* ofin) { 
+        fin = ofin; 
+        std::streampos curPos = fin->tellg();
+        fin->seekg(0, std::ios::end);
+        eofPos = fin->tellg();
+        fin->clear();
+        fin->seekg(curPos);
+    }
 
     void write(char bit) {
         bit &= 1;
-        bits |= (bit << (8 - bitIdx - 1));
+        bits |= (bit << (7 - numBits));
 
-        bitIdx++;
-        if (bitIdx > 7) {
-            bitIdx = 0;
-            bytes[byteIdx] = bits;
+        numBits++;
+        if (numBits > 7) {
+            numBits = 0;
+            bytes[numBytes] = bits;
             bits = 0;
 
-            byteIdx++;
-            if (byteIdx > WRITE_BUFF_SIZE - 1) {
-                byteIdx = 0;
+            numBytes++;
+            if (numBytes > WRITE_BUFF_SIZE - 1) {
+                numBytes = 0;
                 fout->write(bytes, WRITE_BUFF_SIZE);
             }
         }
     }
 
     char read() {
-        if (byteIdx > readSize - 1) {
-            bool isg = fin->good();
+        if (numBytes > readSize - 1) {
             fin->read(bytes, READ_BUFF_SIZE);
             readSize = fin->gcount();
-            std::streamsize bytes = fin->gcount();
-            byteIdx = 0;
-
-            if (!readSize) {
+            numBytes = 0;
+            
+            if (eofPos == fin->tellg() || fin->eof()) {
                 isEof = true;
             }
         }
 
-        char bits = bytes[byteIdx];
-        char bit = (bits >> (8 - bitIdx - 1)) & 1;
+        char bits = bytes[numBytes];
+        char bit = (bits >> (7 - numBits)) & 1;
 
-        bitIdx++;
-        if (bitIdx > 7) {
-            bitIdx = 0;
-
-            byteIdx++;
+        numBits++;
+        if (numBits > 7) {
+            numBits = 0;
+            numBytes++;
         }
 
         return bit;
     }
 
-    bool isEnd() { return isEof; }
+    bool isEnd() { 
+        return isEof && (numBytes >= readSize - 1) && (numBits >= 8 - numPad); 
+    }
 
-    void flush() {
-        if (byteIdx) {
-            fout->write(bytes, byteIdx);
+    char flush() {
+        if (numBytes) {
+            fout->write(bytes, numBytes);
         }
 
-        if (bitIdx) {
+        char numPad = 0;
+        if (numBits) {
+            numPad = 8 - numBits;
             fout->write(&bits, 1);
         }
         fout->flush();
+
+        return numPad;
     }
 };
 
@@ -132,6 +146,10 @@ void SimpleZip::analyze() {
 }
 
 void SimpleZip::buildTree() {
+    if(_freq.empty()) {
+        return;
+    }
+
     auto compare = [](const HuffmanNodePtr& l, const HuffmanNodePtr& r) {
         return l->w > r->w;
     };
@@ -182,6 +200,10 @@ void SimpleZip::findValueOnTree(char val, const HuffmanNodePtr& tree,
 }
 
 void SimpleZip::buildLookupTable(const HuffmanNodePtr& tree, std::string initPath) {
+    if(!tree) {
+        return;
+    }
+    
     if (!tree->l && !tree->r) {
         _lookupTable.insert({tree->val, initPath});
         return;
@@ -204,6 +226,8 @@ void SimpleZip::writeFreqMap() {
         return;
     }
 
+    _fout.write((char*)&_numPad, 1);
+
     size_t mapSz = _freq.size();
     _fout.write((char*)&mapSz, sizeof(mapSz));
 
@@ -212,7 +236,7 @@ void SimpleZip::writeFreqMap() {
         _fout.write((char*)&it.first, 1);
         _fout.write((char*)&it.second, sizeof(size_t));
 
-        headerSize = headerSize + 1 + 8;
+        headerSize = headerSize + 1 + sizeof(size_t);
     }
 }
 
@@ -245,7 +269,10 @@ void SimpleZip::encode() {
             }
         }
     }
-    bitstream.flush();
+    _numPad = bitstream.flush();
+
+    _fout.seekp(0);
+    _fout.write((char*)&_numPad, 1);
 
     _fout.close();
 }
@@ -258,15 +285,24 @@ void SimpleZip::decode() {
         return;
     }
 
+    if(!_tree) {
+        _fout.close();
+        return;
+    }
+
     BitStream bitstream;
     bitstream.setFileIn(&_fin);
+    bitstream.setNumPad(_numPad);
 
     auto node = _tree;
-    while (!bitstream.isEnd()) {
+    while (!bitstream.isEnd()) { 
         if (!node->l && !node->r) {
             _fout.write(&node->val, 1);
-            node = _tree;
-            continue;
+
+            if(node != _tree) {
+                node = _tree;
+                continue;
+            }
         }
 
         char bit = bitstream.read();
@@ -274,6 +310,10 @@ void SimpleZip::decode() {
             node = node->r;
         } else {
             node = node->l;
+        }
+
+        if(!node) {
+            break;
         }
     }
 
@@ -303,6 +343,8 @@ void SimpleZip::readFreqMap() {
         _lastError = OPEN_FILE_ERROR;
         return;
     }
+
+    _fin.read((char*)&_numPad, 1);
 
     size_t mapSize = 0;
     _fin.read((char*)&mapSize, sizeof(mapSize));
